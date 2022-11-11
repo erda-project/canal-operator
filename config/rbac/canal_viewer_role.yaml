@@ -1,0 +1,20 @@
+# permissions for end users to view canals.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: canal-operator-viewer-role
+rules:
+  - apiGroups:
+      - database.erda.cloud
+    resources:
+      - canals
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - database.erda.cloud
+    resources:
+      - canals/status
+    verbs:
+      - get

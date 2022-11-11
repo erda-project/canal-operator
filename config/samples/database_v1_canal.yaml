@@ -1,0 +1,6 @@
+apiVersion: database.erda.cloud/v1
+kind: Canal
+metadata:
+  name: canal-sample
+spec:
+  replicas: 1

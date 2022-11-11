@@ -1,0 +1,39 @@
+FROM registry.erda.cloud/retag/debian:buster
+
+RUN rm -f /etc/localtime && \
+  ln -s /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+  useradd -m cxr
+
+RUN sed -i -r 's/(deb|security).debian.org/mirror.sjtu.edu.cn/g' /etc/apt/sources.list && \
+  apt-get update && \
+  apt-get install -y file netcat openjdk-11-jdk procps mariadb-client vim curl && \
+  apt-get clean
+
+ENV CANAL_VER=1.1.5
+ENV CANAL_DIR=/home/cxr/canal-server
+
+RUN mkdir -p ${CANAL_DIR} && \
+  curl -o /tmp/canal.tar.gz http://erda-project.oss-cn-hangzhou.aliyuncs.com/erda-addons/canal.deployer-${CANAL_VER}.tar.gz && \
+  tar -xzf /tmp/canal.tar.gz -C ${CANAL_DIR} && \
+  rm -f /tmp/canal.tar.gz && \
+  sed -i 's/^canal\.destinations[ \t]*=[ \t]*example$/canal.destinations = /' ${CANAL_DIR}/conf/canal.properties && \
+  mv ${CANAL_DIR}/conf/example ${CANAL_DIR}/example && \
+  sed -i \
+    -e 's/-XX:PermSize[^ "]*//' \
+    -e 's/-XX:MaxPermSize[^ "]*//' \
+    -e 's/-XX:+UseConcMarkSweepGC[^ "]*//' \
+    -e 's/-XX:+UseCMSCompactAtFullCollection[^ "]*//' \
+    -e 's/-XX:+UseFastAccessorMethods[^ "]*//' \
+    ${CANAL_DIR}/bin/startup.sh
+
+COPY run.sh /run.sh
+RUN find ${CANAL_DIR} -type d -exec chmod 755 {} \; && \
+  find ${CANAL_DIR} -type f -exec chmod 644 {} \; && \
+  chown -R cxr:cxr ${CANAL_DIR} && \
+  chmod 755 /run.sh
+
+WORKDIR ${CANAL_DIR}
+EXPOSE 11110 11111 11112
+USER cxr:cxr
+ENTRYPOINT []
+CMD ["/run.sh"]

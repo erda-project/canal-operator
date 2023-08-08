@@ -55,6 +55,8 @@ func MutateSts(canal *databasev1.Canal, sts *appsv1.StatefulSet) error {
 		kCanalOpts[i] = "-D" + k + "=" + canal.Spec.CanalOptions[k]
 	}
 
+	spec := canal.Spec.DeepCopy()
+
 	sts.Spec = appsv1.StatefulSetSpec{
 		ServiceName: canal.BuildName(databasev1.HeadlessSuffix),
 		Replicas:    pointer.Int32Ptr(int32(canal.Spec.Replicas)),
@@ -74,7 +76,8 @@ func MutateSts(canal *databasev1.Canal, sts *appsv1.StatefulSet) error {
 						Image:           canal.Spec.Image,
 						ImagePullPolicy: canal.Spec.ImagePullPolicy,
 						Resources:       canal.Spec.Resources,
-						Env: NewEnv(
+						EnvFrom:         spec.EnvFrom,
+						Env: append(spec.Env, NewEnv(
 							corev1.EnvVar{
 								Name:  "K_LOCAL",
 								Value: kLocal,
@@ -87,7 +90,7 @@ func MutateSts(canal *databasev1.Canal, sts *appsv1.StatefulSet) error {
 								Name:  "K_CANAL_OPTS",
 								Value: strings.Join(kCanalOpts, " "),
 							},
-						),
+						)...),
 						LivenessProbe: &corev1.Probe{
 							ProbeHandler: corev1.ProbeHandler{
 								TCPSocket: &corev1.TCPSocketAction{

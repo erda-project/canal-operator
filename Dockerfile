@@ -1,4 +1,4 @@
-FROM registry.erda.cloud/retag/golang:1.17-buster AS builder
+FROM registry.erda.cloud/erda-x/golang:1 AS builder
 
 WORKDIR /workspace
 
@@ -7,19 +7,12 @@ COPY controllers/ controllers/
 COPY main.go main.go
 COPY go.mod go.mod
 COPY go.sum go.sum
-RUN GOPROXY=https://goproxy.cn,direct CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o canal-operator main.go
+RUN CGO_ENABLED=0 go build -a -o canal-operator main.go
 
-FROM registry.erda.cloud/retag/debian:buster
-
-RUN rm -f /etc/localtime && \
-  ln -s /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
-  useradd -m cxr
-
-RUN sed -i -r 's/(deb|security).debian.org/mirror.sjtu.edu.cn/g' /etc/apt/sources.list && \
-  apt-get update && apt-get install -y curl && apt-get clean
+FROM registry.erda.cloud/erda-x/debian:11
 
 WORKDIR /
 COPY --from=builder /workspace/canal-operator .
-USER cxr:cxr
+USER dice:dice
 ENTRYPOINT []
 CMD ["/canal-operator"]

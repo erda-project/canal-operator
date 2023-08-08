@@ -65,9 +65,7 @@ func Between(i, min, max int) bool {
 }
 
 func (r *Canal) Validate() (err error) {
-	switch r.Spec.Version {
-	case "v1.1.4", "v1.1.5", "v1.1.6", "v1.1.7", "v1.1.8", "v1.1.9": //TODO
-	default:
+	if !strings.HasPrefix(r.Spec.Version, "v") {
 		return fmt.Errorf("version invalid: %s", r.Spec.Version)
 	}
 

@@ -15,13 +15,14 @@ spec:
       labels:
         addon: canal-operator
     spec:
+      imagePullSecrets: ${IMAGE_PULL_SECRETS}
       containers:
         - command:
             - /canal-operator
           args:
             - --leader-elect
-          image: registry.erda.cloud/erda-addons/canal-operator:v1.0
-          imagePullPolicy: Always
+          image: ${IMAGE_REGISTRY}/erda-addons/canal-operator:1.1
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
           env:
             - name: POD_NAME
               valueFrom:

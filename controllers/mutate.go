@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	databasev1 "github.com/erda-project/canal-operator/api/v1"
+	v1 "github.com/erda-project/canal-operator/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,16 +14,32 @@ import (
 	"k8s.io/utils/pointer"
 )
 
-func MutateSts(canal *databasev1.Canal, sts *appsv1.StatefulSet) error {
+func MutateSts(canal *v1.Canal, sts *appsv1.StatefulSet) error {
 	var err error
 	var port int
 
-	if s := canal.Spec.CanalOptions["canal.port"]; s == "" {
-		port = 11111
+	kLocal := "false"
+	if canal.Spec.CanalOptions["canal.admin.manager"] != "" {
+		kLocal = "true"
+	}
+
+	if kLocal == "true" {
+		if s := canal.Spec.CanalOptions["canal.admin.port"]; s == "" {
+			port = 11110
+		} else {
+			port, err = strconv.Atoi(s)
+			if err != nil || port <= 0 || port > 65535 {
+				return fmt.Errorf("canal.admin.port invalid")
+			}
+		}
 	} else {
-		port, err = strconv.Atoi(s)
-		if err != nil || port <= 0 || port > 65535 {
-			return fmt.Errorf("canal.port invalid")
+		if s := canal.Spec.CanalOptions["canal.port"]; s == "" {
+			port = 11111
+		} else {
+			port, err = strconv.Atoi(s)
+			if err != nil || port <= 0 || port > 65535 {
+				return fmt.Errorf("canal.port invalid")
+			}
 		}
 	}
 
@@ -41,24 +57,108 @@ func MutateSts(canal *databasev1.Canal, sts *appsv1.StatefulSet) error {
 		annotations[k] = v
 	}
 
-	kLocal := "false"
-	if canal.Spec.CanalOptions["canal.admin.manager"] != "" {
-		kLocal = "true"
-	}
-
 	kCanalOpts := make([]string, 0, len(canal.Spec.CanalOptions))
 	for k := range canal.Spec.CanalOptions {
 		kCanalOpts = append(kCanalOpts, k)
 	}
 	sort.Strings(kCanalOpts)
 	for i, k := range kCanalOpts {
-		kCanalOpts[i] = "-D" + k + "=" + canal.Spec.CanalOptions[k]
+		v := canal.Spec.CanalOptions[k]
+		if k == "canal.admin.passwd" {
+			v = v1.EncodePassword(v)
+		}
+		kCanalOpts[i] = "-D" + k + "=" + v
 	}
 
 	spec := canal.Spec.DeepCopy()
 
+	containers := []corev1.Container{
+		{
+			Name:            "canal",
+			Image:           canal.Spec.Image,
+			ImagePullPolicy: canal.Spec.ImagePullPolicy,
+			Resources:       canal.Spec.Resources,
+			EnvFrom:         spec.EnvFrom,
+			Env: append(spec.Env, NewEnv(
+				corev1.EnvVar{
+					Name:  "K_LOCAL",
+					Value: kLocal,
+				},
+				corev1.EnvVar{
+					Name:  "K_JAVA_OPTS",
+					Value: canal.Spec.JavaOptions,
+				},
+				corev1.EnvVar{
+					Name:  "K_CANAL_OPTS",
+					Value: strings.Join(kCanalOpts, " "),
+				},
+			)...),
+			LivenessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					TCPSocket: &corev1.TCPSocketAction{
+						Port: intstr.FromInt(port),
+					},
+				},
+				// 1m
+				FailureThreshold:    12,
+				InitialDelaySeconds: 1,
+				PeriodSeconds:       5,
+				SuccessThreshold:    1,
+				TimeoutSeconds:      1,
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					MountPath: "/configmaps",
+					Name:      canal.Name,
+				},
+			},
+		},
+	}
+
+	if kLocal == "true" {
+		containers = append(containers, corev1.Container{
+			Name:            "admin",
+			Image:           canal.Spec.Image,
+			ImagePullPolicy: canal.Spec.ImagePullPolicy,
+			Command:         []string{"/admin.sh"},
+			Resources:       canal.Spec.AdminResources,
+			EnvFrom:         spec.EnvFrom,
+			Env: append(spec.Env, NewEnv(
+				corev1.EnvVar{
+					Name:  "K_LOCAL",
+					Value: kLocal,
+				},
+				corev1.EnvVar{
+					Name:  "K_JAVA_OPTS",
+					Value: canal.Spec.JavaOptions,
+				},
+			)...),
+			LivenessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					TCPSocket: &corev1.TCPSocketAction{
+						Port: intstr.FromInt(8089),
+					},
+				},
+				// 1m
+				FailureThreshold:    12,
+				InitialDelaySeconds: 1,
+				PeriodSeconds:       5,
+				SuccessThreshold:    1,
+				TimeoutSeconds:      1,
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					MountPath: "/configmaps",
+					Name:      canal.Name,
+				},
+			},
+		})
+	}
+
+	var enableServiceLinks bool
+
 	sts.Spec = appsv1.StatefulSetSpec{
-		ServiceName: canal.BuildName(databasev1.HeadlessSuffix),
+		ServiceName: canal.BuildName(v1.HeadlessSuffix),
 		Replicas:    pointer.Int32Ptr(int32(canal.Spec.Replicas)),
 		Selector: &metav1.LabelSelector{
 			MatchLabels: labels,
@@ -69,49 +169,9 @@ func MutateSts(canal *databasev1.Canal, sts *appsv1.StatefulSet) error {
 				Annotations: annotations,
 			},
 			Spec: corev1.PodSpec{
-				Affinity: canal.Spec.Affinity.DeepCopy(),
-				Containers: []corev1.Container{
-					{
-						Name:            "canal",
-						Image:           canal.Spec.Image,
-						ImagePullPolicy: canal.Spec.ImagePullPolicy,
-						Resources:       canal.Spec.Resources,
-						EnvFrom:         spec.EnvFrom,
-						Env: append(spec.Env, NewEnv(
-							corev1.EnvVar{
-								Name:  "K_LOCAL",
-								Value: kLocal,
-							},
-							corev1.EnvVar{
-								Name:  "K_JAVA_OPTS",
-								Value: canal.Spec.JavaOptions,
-							},
-							corev1.EnvVar{
-								Name:  "K_CANAL_OPTS",
-								Value: strings.Join(kCanalOpts, " "),
-							},
-						)...),
-						LivenessProbe: &corev1.Probe{
-							ProbeHandler: corev1.ProbeHandler{
-								TCPSocket: &corev1.TCPSocketAction{
-									Port: intstr.FromInt(port),
-								},
-							},
-							// 1m
-							FailureThreshold:    12,
-							InitialDelaySeconds: 1,
-							PeriodSeconds:       5,
-							SuccessThreshold:    1,
-							TimeoutSeconds:      1,
-						},
-						VolumeMounts: []corev1.VolumeMount{
-							{
-								MountPath: "/configmaps",
-								Name:      canal.Name,
-							},
-						},
-					},
-				},
+				EnableServiceLinks: &enableServiceLinks,
+				Affinity:           canal.Spec.Affinity.DeepCopy(),
+				Containers:         containers,
 				Volumes: []corev1.Volume{
 					{
 						Name: canal.Name,
@@ -177,7 +237,7 @@ func NewEnv(a ...corev1.EnvVar) []corev1.EnvVar {
 	}, a...)
 }
 
-func MutateSvc(canal *databasev1.Canal, svc *corev1.Service) error {
+func MutateSvc(canal *v1.Canal, svc *corev1.Service) error {
 	var err error
 	var adminPort, port, metricsPort int
 
@@ -185,8 +245,8 @@ func MutateSvc(canal *databasev1.Canal, svc *corev1.Service) error {
 		adminPort = 11110
 	} else {
 		adminPort, err = strconv.Atoi(s)
-		if err != nil || port <= 0 || port > 65535 {
-			return fmt.Errorf("canal.admin.port invalid")
+		if err != nil || adminPort <= 0 || adminPort > 65535 {
+			return fmt.Errorf("canal.admin.port invalid: %s", s)
 		}
 	}
 
@@ -195,7 +255,7 @@ func MutateSvc(canal *databasev1.Canal, svc *corev1.Service) error {
 	} else {
 		port, err = strconv.Atoi(s)
 		if err != nil || port <= 0 || port > 65535 {
-			return fmt.Errorf("canal.port invalid")
+			return fmt.Errorf("canal.port invalid: %s", s)
 		}
 	}
 
@@ -203,8 +263,8 @@ func MutateSvc(canal *databasev1.Canal, svc *corev1.Service) error {
 		metricsPort = 11112
 	} else {
 		metricsPort, err = strconv.Atoi(s)
-		if err != nil || port <= 0 || port > 65535 {
-			return fmt.Errorf("canal.metrics.pull.port invalid")
+		if err != nil || metricsPort <= 0 || metricsPort > 65535 {
+			return fmt.Errorf("canal.metrics.pull.port invalid: %s", s)
 		}
 	}
 
@@ -230,6 +290,26 @@ func MutateSvc(canal *databasev1.Canal, svc *corev1.Service) error {
 				Protocol:   corev1.ProtocolTCP,
 				Port:       int32(metricsPort),
 				TargetPort: intstr.FromInt(metricsPort),
+			},
+		},
+	}
+
+	return nil
+}
+
+func MutateSvcAdmin(canal *v1.Canal, svc *corev1.Service) error {
+	const adminPort = 8089
+
+	svc.Labels = canal.NewLabels()
+	svc.Spec = corev1.ServiceSpec{
+		ClusterIP: corev1.ClusterIPNone,
+		Selector:  canal.NewLabels(),
+		Ports: []corev1.ServicePort{
+			{
+				Name:       "admin",
+				Protocol:   corev1.ProtocolTCP,
+				Port:       int32(adminPort),
+				TargetPort: intstr.FromInt(adminPort),
 			},
 		},
 	}

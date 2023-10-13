@@ -21,7 +21,7 @@ spec:
             - /canal-operator
           args:
             - --leader-elect
-          image: ${IMAGE_REGISTRY}/erda-addons/canal-operator:1.1
+          image: ${IMAGE_REGISTRY}/erda-addons/canal-operator:1.3
           imagePullPolicy: ${IMAGE_PULL_POLICY}
           env:
             - name: POD_NAME

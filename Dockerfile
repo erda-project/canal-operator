@@ -12,6 +12,10 @@ RUN CGO_ENABLED=0 go build -a -o canal-operator main.go
 FROM registry.erda.cloud/erda-x/debian:11
 
 WORKDIR /
+
+RUN apt-get update && apt-get install -y mariadb-client && apt-get clean
+COPY canal_manager.sql /canal_manager.sql
+
 COPY --from=builder /workspace/canal-operator .
 USER dice:dice
 ENTRYPOINT []

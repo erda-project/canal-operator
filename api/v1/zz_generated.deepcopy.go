@@ -95,6 +95,13 @@ func (in *CanalSpec) DeepCopyInto(out *CanalSpec) {
 			(*out)[key] = val
 		}
 	}
+	if in.AdminOptions != nil {
+		in, out := &in.AdminOptions, &out.AdminOptions
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.Labels != nil {
 		in, out := &in.Labels, &out.Labels
 		*out = make(map[string]string, len(*in))
@@ -115,6 +122,7 @@ func (in *CanalSpec) DeepCopyInto(out *CanalSpec) {
 		(*in).DeepCopyInto(*out)
 	}
 	in.Resources.DeepCopyInto(&out.Resources)
+	in.AdminResources.DeepCopyInto(&out.AdminResources)
 	if in.EnvFrom != nil {
 		in, out := &in.EnvFrom, &out.EnvFrom
 		*out = make([]corev1.EnvFromSource, len(*in))

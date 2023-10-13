@@ -41,6 +41,20 @@ type CanalSpec struct {
 
 	//+optional
 	CanalOptions map[string]string `json:"canalOptions,omitempty"`
+	//canal.admin.manager 127.0.0.1:8089
+	//canal.admin.port    11110
+	//canal.admin.user    admin
+	//canal.admin.passwd  admin
+
+	//+optional
+	AdminOptions map[string]string `json:"adminOptions,omitempty"`
+	//spring.datasource.address  127.0.0.1:3306
+	//spring.datasource.database canal_manager
+	//spring.datasource.username canal
+	//spring.datasource.password canal
+	//canal.adminUser            admin
+	//canal.adminPasswd          admin
+
 	//+optional
 	JavaOptions string `json:"javaOptions,omitempty"`
 
@@ -72,6 +86,8 @@ type CanalSpec struct {
 	// already allocated to the pod.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty" protobuf:"bytes,8,opt,name=resources"`
+	// +optional
+	AdminResources corev1.ResourceRequirements `json:"adminResources,omitempty" protobuf:"bytes,8,opt,name=adminResources"`
 
 	// List of sources to populate environment variables in the container.
 	// The keys defined within a source must be a C_IDENTIFIER. All invalid keys
@@ -102,6 +118,9 @@ type CanalStatus struct {
 
 	//+optional
 	Color string `json:"color,omitempty"`
+
+	//+optional
+	AdminInitialized bool `json:"adminInitialized,omitempty"`
 }
 
 //+kubebuilder:object:root=true

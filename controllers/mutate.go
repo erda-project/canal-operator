@@ -6,12 +6,13 @@ import (
 	"strconv"
 	"strings"
 
-	v1 "github.com/erda-project/canal-operator/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
+
+	v1 "github.com/erda-project/canal-operator/api/v1"
 )
 
 func MutateSts(canal *v1.Canal, sts *appsv1.StatefulSet) error {
@@ -270,8 +271,7 @@ func MutateSvc(canal *v1.Canal, svc *corev1.Service) error {
 
 	svc.Labels = canal.NewLabels()
 	svc.Spec = corev1.ServiceSpec{
-		ClusterIP: corev1.ClusterIPNone,
-		Selector:  canal.NewLabels(),
+		Selector: canal.NewLabels(),
 		Ports: []corev1.ServicePort{
 			{
 				Name:       "admin",
@@ -302,8 +302,7 @@ func MutateSvcAdmin(canal *v1.Canal, svc *corev1.Service) error {
 
 	svc.Labels = canal.NewLabels()
 	svc.Spec = corev1.ServiceSpec{
-		ClusterIP: corev1.ClusterIPNone,
-		Selector:  canal.NewLabels(),
+		Selector: canal.NewLabels(),
 		Ports: []corev1.ServicePort{
 			{
 				Name:       "admin",

@@ -21,8 +21,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
-	v1 "github.com/erda-project/canal-operator/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,6 +31,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	v1 "github.com/erda-project/canal-operator/api/v1"
 )
 
 // CanalReconciler reconciles a Canal object
@@ -60,24 +62,31 @@ func (r *CanalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	canal := &v1.Canal{}
 	zeroResult := ctrl.Result{}
 
+	// First, check if Canal resource exists
+	if err := r.Get(ctx, req.NamespacedName, canal); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Canal resource was deleted, stop reconciling
+			log.Info("Canal resource not found. Assuming it was deleted.")
+			return zeroResult, nil
+		}
+		log.Error(err, "unable to fetch Canal")
+		return zeroResult, err
+	}
+
+	// Get or create ConfigMap
 	cm := &corev1.ConfigMap{}
 	if err := r.Get(ctx, req.NamespacedName, cm); err != nil {
 		if apierrors.IsNotFound(err) {
 			cm.Name = req.Name
 			cm.Namespace = req.Namespace
-			err = r.Create(ctx, cm)
-		}
-		if err != nil {
-			log.Error(err, "GetOrCreate ConfigMap failed")
+			if err = r.Create(ctx, cm); err != nil {
+				log.Error(err, "Create ConfigMap failed")
+				return zeroResult, err
+			}
+		} else {
+			log.Error(err, "Get ConfigMap failed")
 			return zeroResult, err
 		}
-	}
-
-	if err := r.Get(ctx, req.NamespacedName, canal); err != nil {
-		if !apierrors.IsNotFound(err) {
-			log.Error(err, "unable to fetch Canal")
-		}
-		return zeroResult, err
 	}
 
 	canal.Default()
@@ -87,6 +96,12 @@ func (r *CanalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	if err := r.Update(ctx, canal); err != nil {
+		if apierrors.IsConflict(err) {
+			// Handle optimistic concurrency conflict
+			log.Info("Canal resource conflict detected, will retry", "error", err.Error())
+			return ctrl.Result{RequeueAfter: time.Second * 2}, nil
+		}
+		log.Error(err, "Update Canal failed")
 		return zeroResult, err
 	}
 
@@ -115,7 +130,7 @@ func (r *CanalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 
 		{ //db
-			b, err := os.ReadFile("/canal_manager.sql") // TODO Version
+			b, err := os.ReadFile("/config/sql/canal_manager.sql") // TODO Version
 			if err != nil {
 				log.Error(err, "Read canal_manager.sql failed")
 				return zeroResult, err
@@ -151,28 +166,44 @@ func (r *CanalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 		canal.Status.AdminInitialized = true
 		if err := r.Status().Update(ctx, canal); err != nil {
+			if apierrors.IsNotFound(err) {
+				// Canal was deleted during reconciliation, this is expected
+				log.Info("Canal resource was deleted during admin initialization")
+				return zeroResult, nil
+			}
+			if apierrors.IsConflict(err) {
+				// Handle optimistic concurrency conflict
+				log.Info("Canal admin status conflict detected, will retry", "error", err.Error())
+				return ctrl.Result{RequeueAfter: time.Second * 2}, nil
+			}
+			log.Error(err, "Failed to update Canal admin status")
 			return zeroResult, err
 		}
 	}
 
-	headlessSvc := &corev1.Service{
+	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      canal.BuildName(v1.HeadlessSuffix),
 			Namespace: canal.Namespace,
 		},
 	}
-	opResult, err := ctrl.CreateOrUpdate(ctx, r.Client, headlessSvc, func() error {
-		err := MutateSvc(canal, headlessSvc)
+	opResult, err := ctrl.CreateOrUpdate(ctx, r.Client, svc, func() error {
+		err := MutateSvc(canal, svc)
 		if err != nil {
 			return err
 		}
-		return ctrl.SetControllerReference(canal, headlessSvc, r.Scheme)
+		return ctrl.SetControllerReference(canal, svc, r.Scheme)
 	})
 	if err != nil {
-		log.Error(err, "CreateOrUpdate headless svc failed")
+		if apierrors.IsConflict(err) {
+			// Handle optimistic concurrency conflict
+			log.Info("Service conflict detected, will retry", "error", err.Error())
+			return ctrl.Result{RequeueAfter: time.Second * 5}, nil
+		}
+		log.Error(err, "CreateOrUpdate svc failed")
 		return ctrl.Result{}, err
 	}
-	log.Info("CreateOrUpdate headless svc succeeded", "OperationResult", opResult)
+	log.Info("CreateOrUpdate svc succeeded", "OperationResult", opResult)
 
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -188,6 +219,11 @@ func (r *CanalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.SetControllerReference(canal, sts, r.Scheme)
 	})
 	if err != nil {
+		if apierrors.IsConflict(err) {
+			// Handle optimistic concurrency conflict
+			log.Info("StatefulSet conflict detected, will retry", "error", err.Error())
+			return ctrl.Result{RequeueAfter: time.Second * 5}, nil
+		}
 		log.Error(err, "CreateOrUpdate sts failed")
 		return ctrl.Result{}, err
 	}
@@ -205,6 +241,11 @@ func (r *CanalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			return ctrl.SetControllerReference(canal, adminSvc, r.Scheme)
 		})
 		if err != nil {
+			if apierrors.IsConflict(err) {
+				// Handle optimistic concurrency conflict
+				log.Info("Admin Service conflict detected, will retry", "error", err.Error())
+				return ctrl.Result{RequeueAfter: time.Second * 5}, nil
+			}
 			log.Error(err, "CreateOrUpdate admin svc failed")
 			return ctrl.Result{}, err
 		}
@@ -233,6 +274,17 @@ func (r *CanalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if color != canal.Status.Color {
 		canal.Status.Color = color
 		if err := r.Status().Update(ctx, canal); err != nil {
+			if apierrors.IsNotFound(err) {
+				// Canal was deleted during reconciliation, this is expected
+				log.Info("Canal resource was deleted during reconciliation")
+				return zeroResult, nil
+			}
+			if apierrors.IsConflict(err) {
+				// Handle optimistic concurrency conflict
+				log.Info("Canal status conflict detected, will retry", "error", err.Error())
+				return ctrl.Result{RequeueAfter: time.Second * 2}, nil
+			}
+			log.Error(err, "Failed to update Canal status")
 			return zeroResult, err
 		}
 	}

@@ -30,6 +30,10 @@ func (r *Canal) Default() {
 	if r.Spec.CanalOptions["canal.admin.manager"] != "" {
 		//TODO：admin和server各自独立部署，在admin中配置server
 
+		if r.Spec.AdminOptions == nil {
+			r.Spec.AdminOptions = make(map[string]string)
+		}
+
 		// if r.Spec.AdminOptions["spring.datasource.address"] == "" {
 		// 	r.Spec.AdminOptions["spring.datasource.address"] = "127.0.0.1:3306"
 		// }
